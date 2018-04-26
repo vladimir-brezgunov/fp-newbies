@@ -7,7 +7,7 @@ data Card = Explosion | Defuse | Favor | Skip | Shuffle | Attack |
                                   deriving Show
 type Kind = String
 
-type Hand = [Card]
+type Hand = (Int, [Card])
 
 type Deck = [Card]
 
@@ -34,7 +34,7 @@ shuffle stdGen cards = randomCard:shuffle newGen rest where
   rest = left ++ right
   (index, newGen) = randomR (0, length cards - 1) stdGen
 
-distributeDeck :: Int -> [Card] -> (Deck, [Hand])
+distributeDeck :: Int -> [Card] -> (Deck, [[Card]])
 distributeDeck 0 cards = (cards, [])
 distributeDeck numPlayers cards = (deck, firstHand:hands) where
   numCards = 5
@@ -44,10 +44,12 @@ distributeDeck numPlayers cards = (deck, firstHand:hands) where
 makeGame :: StdGen -> Int -> Table
 makeGame _ playersNum | playersNum < 2 = error "Get me players, please"
                       | playersNum > 5 = error "Too many players!"
-makeGame gen playersNum = Table deck [] hands [] startPlayer where
+makeGame gen playersNum = Table deck [] (zip [0..] hands) [] startPlayer where
   (deck, hands) = distributeDeck playersNum $ shuffle gen defaultDeck
   startPlayer = fst $ randomR (0, playersNum - 1) gen 
 
 resolveTurn :: Table -> Table
 resolveTurn (Table (topCard:deck) discard hands playedCards currentPlayer) =
   Table deck (discard ++ playedCards) hands [] $ currentPlayer + 1
+
+
