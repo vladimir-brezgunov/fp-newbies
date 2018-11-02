@@ -1,10 +1,11 @@
-{-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, TypeSynonymInstances, ScopedTypeVariables #-}
 
 import Prelude hiding (Right)
 
 --Нужные монады
 import Control.Monad.State
 import Control.Monad.Writer
+import Control.Monad.ST
 
 --Мемоизатор функций
 import Data.Function.Memoize
@@ -12,8 +13,12 @@ import Data.Function.Memoize
 --Необходимые структуры данных
 import qualified Data.Array as A
 import Data.Array ((!))
+import Data.Array.IO
+import Data.Array.ST
+import Data.IORef
 import Data.List
 import qualified Data.Map as M
+import Data.STRef
 
 --Юнит-тесты
 import Test.QuickCheck
@@ -112,6 +117,30 @@ traverseStateWriter mat path = execWriter $ flip evalStateT (1, 1) $ do
         tell $ [mat A.! pos] --дописать ячейку в путь
         put $ move dir pos --изменить координату на новую
 
+--Ну и совсем императивно-мутабельный вариант в монаде IO
+traverseStateIO :: Matrix a -> Path -> IO [a]
+traverseStateIO mat path = do
+    pos <- newIORef (1, 1)
+    --pos :: IORef Cell
+    acc <- newIORef []
+    --acc :: IORef [a]
+    forM_ path $ \dir -> do
+        pos' <- readIORef pos --получить текущую координату
+        modifyIORef acc ((mat A.! pos') :) --дописать ячейку в путь
+        writeIORef pos $ move dir pos' --изменить координату на новую 
+    readIORef acc >>= return . reverse
+
+--То же самое в ST
+traverseStateST :: Matrix a -> Path -> [a]
+traverseStateST mat path = reverse $ runST $ do
+    pos <- newSTRef (1, 1)
+    acc <- newSTRef []
+    forM_ path $ \dir -> do
+        pos' <- readSTRef pos --получить текущую координату
+        modifySTRef acc ((mat A.! pos') :) --дописать ячейку в путь
+        writeSTRef pos $ move dir pos' --изменить координату на новую 
+    readSTRef acc
+
 --Предыдущий вариант был "совсем императивным", а теперь "совсем функциональный"
 traverseFunctional :: Matrix a -> Path -> [a]
 traverseFunctional mat = tail . map (mat A.!) . scanl (flip move) (1, 1)
@@ -175,6 +204,62 @@ shortestPathState mat = reverse $ snd $ (M.! size) $ flip execState M.empty $ do
             modify $ M.insertWith min (move Down c)  (newScore, Down : prevPath)
     where
         (_, size@(h, w)) = A.bounds mat
+
+--Мутабельный вариант в монаде IO
+shortestPathIO :: forall a . (Bounded a, Ord a, Num a) => Matrix a -> IO Path
+shortestPathIO mat = do
+    let matBounds@(_, size@(h, w)) = A.bounds mat
+    arr <- newArray matBounds (maxBound, []) :: IO (IOArray Cell (a, Path))
+    let update pos@(i, j) elem | i > h || j > w = return ()
+                               | otherwise = do
+            tmp <- readArray arr pos
+            when (elem < tmp) $ writeArray arr pos elem
+    forM_ [1 .. h] $ \i -> do
+        forM_ [1 .. w] $ \j -> do
+            let c = (i, j)
+            (prevScore, prevPath) <- readArray arr c
+            let newScore = prevScore + mat ! c
+            update (move Right c) (newScore, Right : prevPath)
+            update (move Down c)  (newScore, Down : prevPath)
+    (_, result) <- readArray arr size
+    return $ reverse result
+
+--Мутабельный вариант в монаде ST
+shortestPathST :: forall a . (Bounded a, Ord a, Num a) => Matrix a -> Path
+shortestPathST mat = reverse $ runST $ do
+    let fullSize@(_, size@(h, w)) = A.bounds mat
+    arr <- newArray fullSize (maxBound, []) :: ST s (STArray s Cell (a, Path))
+    let update pos@(i, j) elem | i > h || j > w = return ()
+                               | otherwise = do
+            tmp <- readArray arr pos
+            when (elem < tmp) $ writeArray arr pos elem
+    forM_ [1 .. h] $ \i -> do
+        forM_ [1 .. w] $ \j -> do
+            let c = (i, j)
+            (prevScore, prevPath) <- readArray arr c
+            let newScore = prevScore + mat ! c
+            update (move Right c) (newScore, Right : prevPath)
+            update (move Down c)  (newScore, Down : prevPath)
+    (_, result) <- readArray arr size
+    return result
+
+--И совсем чисто-функциональный с явной мемоизацией
+shortestPathMemo :: (Ord a, Num a) => Matrix a -> Path
+shortestPathMemo mat = reverse $ snd $ arr ! size where
+    fullSize@(_, size@(h, w)) = A.bounds mat
+    arr = A.array fullSize $
+        map (\pos -> (pos, shortestAt pos)) [ (i, j) | i <- [1..h], j <- [1..w] ]
+    --Локальная функция, вычисляющая кратчайший путь до определённой клетки
+    shortestAt (1, 1) = (0, [])
+    shortestAt c@(i, j) | i == 1    = tryRight
+                        | j == 1    = tryDown
+                        | otherwise = min tryRight tryDown
+        where
+            curScore = mat ! c
+            (scoreRight, pathRight) = arr ! (moveBack Right c)
+            (scoreDown,  pathDown)  = arr ! (moveBack Down c)
+            tryRight = (curScore + scoreRight, Right : pathRight)
+            tryDown  = (curScore + scoreDown,  Down  : pathDown)  
 
 ---- Тесты --------------------------------------------------------------------
 --Немножечко юнит-тестов с применением библиотеки QuickCheck
