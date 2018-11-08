@@ -11,16 +11,18 @@ main = hspec $ do
 
   it "Constants" $ do
     assert0 "1.0" 1
+    assert0 "1" 1
     assertError0_ "1abc"
 
-{-
   it "Basic arithmetic" $ do
-    assertDouble_ int0 "1 + 1" 2
-    assertDouble_ int0 "2 - 1" 1
-    assertDouble_ int0 "2 * 3" 6
+    assertDouble_ int0 "1+1" 2
+    assertDouble_ int0 "2-1" 1
+    assertDouble_ int0 "2*3" 6
     assertDouble_ int0 "8 / 4" 2
-    assertDouble_ int0 "7 % 4" 3
--}
+    assertDouble_ int0 "16 - 8/4 +   10" 24
+    assertDouble_ int0 "(16 - 8)/4 +   10" 12
+    --assertDouble_ int0 "7 % 4" 3
+
 {-
   it "Variables" $ do
     int1 <- assertDouble int0 "x = 1" 1
