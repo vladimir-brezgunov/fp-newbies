@@ -14,17 +14,17 @@ tests:
     - HUnit
     - hspec
     - interpreter
-copyright: 2018 Author name here
+copyright: 2018 Ciliz
 maintainer: example@example.com
 dependencies:
 - base >= 4.7 && < 5
 name: interpreter
-version: 0.1.0.0
+version: 0.2.0.0
 extra-source-files:
 - README.md
 - ChangeLog.md
-author: Author name here
-github: githubuser/interpreter
+author: Ciliz
+github: https://github.com/vladimir-brezgunov/fp-newbies/tree/master/interpreter
 license: BSD3
 executables:
   interpreter-exe:
@@ -36,4 +36,4 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - interpreter
-description: Please see the README on GitHub at <https://github.com/githubuser/interpreter#readme>
+description: Please see the README on GitHub at <https://github.com/vladimir-brezgunov/fp-newbies/tree/master/interpreter#readme>

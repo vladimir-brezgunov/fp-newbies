@@ -1,17 +1,50 @@
-module SimpleInteractiveInterpreter (
-    Interpreter,
-    newInterpreter,
-    Result,
-    input
-) where
+module SimpleInteractiveInterpreter where
 
 import Text.Parsec
 import Text.Parsec.Token
 import Text.Parsec.Language (emptyDef)
 import Text.Parsec.Expr
 
-{- * Parsing -}
+{- * Определения -}
+-- $definitions 
+-- В маленьком язычке, который должен уметь наш интерпретатор-калькулятор, должны
+-- поддерживаться следующие сущности:
+--
+--   - константы типа 'Double': @2@, @3.141@;
+--   - переменные со строковым именем: @x@, @my_variable_42@;
+--   - арифметические выражения с операторами и скобками: @2+2@, @foo*(bar-1)@;
+--   - объявление функций: @fn inc x => x + 1@; @fn mean x y => (x + y) / 2@.
+--
+-- На данный момент поддерживаются только выражения с константами. Выражения – это
+-- такие куски кода, которые можно вычислить и получить результат. Выражения могут
+-- рекурсивно состоять из других подвыражений, и в ФП удобно представлять их
+-- алгебраическими типами-суммами.
 
+-- |Алгебраический тип для представления произвольных выражений.
+data Expr
+    = Const Double          -- ^Выражение может быть константным значением...
+    | BinaryOp Op Expr Expr -- ^...либо бинарным оператором, применённым к левому и правому подвыражениям.
+
+-- |Простой тип-перечисление для поддерживаемых бинарных операторов.
+data Op = Add | Sub | Mul | Div | Rem
+
+{- * Парсинг -}
+-- $parsing
+-- Для разбора выражений, введённых в виде строк, будем использовать широко применяемые
+-- в ФП комбинаторные парсеры, которые декларативно описывают структуру разбираемого языка.
+-- Возьмём популярную, промышленного качества библиотеку /Parsec/ (что важно, она идёт 
+-- в поставке хаскеля на Codewars), которая позволит существенно автоматизировать
+-- нашу задачу, а также выдаёт понятные сообщения об ошибках.
+
+-- ** Вспомогательные структуры /Parsec/
+-- $aux
+-- В /Parsec/ из коробки есть средства для разбора лексем языка, которые берут на себя
+-- всю заботу по обработке пробелов, комментариев, разборе числовых литералов и
+-- экранированных строк и т. д. Для этого нужно задать описание некоторых характеристик
+-- языка в специальной структуре и скормить её функции, которая выдаст пачку полезных
+-- парсеров.
+
+-- | Набор парсеров, полученный из описания того, что может встретиться в языке.
 calcLang = makeTokenParser $ emptyDef {
     identStart = letter,
     identLetter = alphaNum,
@@ -20,31 +53,48 @@ calcLang = makeTokenParser $ emptyDef {
     opLetter = oneOf "*/+-%"
 }
 
-data Expr = Const Double | BinaryOp Op Expr Expr
+-- | Список, задающий, какой символ в какой оператор нужно превратить.
+operators :: [[(Char, Op)]]
+operators = [ [ ('*', Mul), ('/', Div) ],
+              [ ('+', Add), ('-', Sub) ] ]
 
+-- | Таблица парсеров операторов с убыванием приоритета, сконвертированная из 'operators'.
+table = [ [ Infix (char ch *> whiteSpace calcLang *> return (BinaryOp op)) AssocLeft
+          | (ch, op) <- opGroup ]
+        | opGroup <- operators ]
+
+{- Код выше – более короткий способ записать кучу бойлерплейта по определению операторов, вроде:
+table = [ [ Infix (char '*' *> return (BinaryOp Mul)) AssocLeft,
+            Infix (char '/' *> return (BinaryOp Div)) AssocLeft ],
+          [ Infix (char '+' *> return (BinaryOp Add)) AssocLeft,
+        <...>
+-}
+
+-- ** Парсеры
+-- $parsers
+-- Теперь можно непосредственно приступить к разбору структур языка. Каждой сущности
+-- (будь то константа, переменная, оператор, выражение) соответствует парсер, который
+-- может её разобрать, а парсеры для составных сущностей строятся из более простых
+-- применением различных функций-комбинаторов.
+
+-- |Парсер числовых констант.
 pConst = Const . toDouble <$> naturalOrFloat calcLang where
     toDouble (Left l) = fromIntegral l
     toDouble (Right r) = r
 
+-- |Парсер арифметических выражений, который сгенерирован /Parsec/ из описания операторов.
 pExpr = buildExpressionParser table pTerm
 
+-- |Парсер элементов, из которых могут составляться выражения -
+-- сейчас это либо константы, либо подвыражения в скобках.
 pTerm = parens calcLang pExpr <|> pConst
 
-{-
-table = [
-            [ char '*' *> return (BinaryOp Mul) ,
-              char '/' *> return (BinaryOp Div) ],
-            [ char '+' *> return (BinaryOp Add),
-              char '-' *> return (BinaryOp Sub) ]
-        ]
--}
-
-operators = [ [('*', Mul), ('/', Div)],
-              [('+', Add), ('-', Sub)] ]
-
-table = [ [ Infix (char ch *> whiteSpace calcLang *> return (BinaryOp op)) AssocLeft
-          | (ch, op) <- opGroup ]
-        | opGroup <- operators ]
+{- * Вычисления -}
+--
+-- $evaluation
+-- 
+-- Чтобы получить результат, выражение нужно /вычислить/. Делается это рекурсивным обходом
+-- значения 'Expr' с превращением в 'Double'-вый результат всего что можно.
 
 eval :: Expr -> Double
 eval (Const val) = val
@@ -55,13 +105,26 @@ eval (BinaryOp op left right) = opDo (eval left) (eval right) where
         Mul -> (*)
         Div -> (/)
 
-data Interpreter
-type Result = Maybe Double
-data Op = Add | Sub | Mul | Div | Rem
+{- * Выполнение -}
+--
+-- $interpretation
+--
+-- Теперь осталось запустить интерпретатор – скормить ему строку и получить результат.
 
+-- |Результат – это опциональный 'Double'.
+type Result = Maybe Double
+
+-- |Тип для интерпретатора, который должен иметь информацию о переменных и функциях.
+-- Сейчас их нет, поэтому тип – заглушка и даже не имеет значений.
+data Interpreter
+
+-- |Средство создать новый экземпляр интерпретатора, пока тоже заглушка.
 newInterpreter :: Interpreter
 newInterpreter = undefined
 
+-- |Итоговая функция, которую по требованию задачи должен экспортировать модуль.
+-- Ей можно скормить строку с состоянием интерпретатора и получить результат
+-- с новым состоянием (либо ошибку).
 input :: String -> Interpreter -> Either String (Result, Interpreter)
 input str interpreter = case parse (pExpr <* eof) "" str of
     Left err -> Left $ show err
