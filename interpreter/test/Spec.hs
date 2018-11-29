@@ -1,5 +1,5 @@
 import Control.Monad                (foldM)
-import SimpleInteractiveInterpreter (input, newInterpreter)
+import SimpleInteractiveInterpreter
 import Test.Hspec
 import Test.HUnit
 
@@ -23,13 +23,18 @@ main = hspec $ do
     assertDouble_ int0 "(16 - 8)/4 +   10" 12
     --assertDouble_ int0 "7 % 4" 3
 
-{-
+  it "canParseVars" $ do
+    parseExpr "x = 0" `shouldBe` Right (Assign "x" (Const 0))
+    parseExpr "x = y = 0" `shouldBe` Right (Assign "x" (Assign "y" (Const 0)))
+    parseExpr "x = 1 + (y = 2)" `shouldBe` Right (Assign "x" (BinaryOp Add (Const 1) (Assign "y" (Const 2))))
+
+
   it "Variables" $ do
     int1 <- assertDouble int0 "x = 1" 1
     assertDouble_ int1 "x" 1
     assertDouble_ int1 "x + 3" 4
     assertError_ int1 "y"
-
+{-
   it "Functions" $ do
     int1 <- assertNone int0 "fn avg x y => (x + y) / 2"
     assertDouble_ int1 "avg 4 2" 3

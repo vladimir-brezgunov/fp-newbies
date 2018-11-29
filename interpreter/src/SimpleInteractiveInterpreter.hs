@@ -1,9 +1,14 @@
 module SimpleInteractiveInterpreter where
 
-import Text.Parsec
+import Control.Monad.Except
+import Control.Monad.State
+import Data.Bifunctor (first)
+import Text.Parsec hiding (State)
 import Text.Parsec.Token
 import Text.Parsec.Language (emptyDef)
 import Text.Parsec.Expr
+import qualified Data.Map as M
+import Data.Maybe
 
 {- * Определения -}
 -- $definitions 
@@ -21,12 +26,23 @@ import Text.Parsec.Expr
 -- алгебраическими типами-суммами.
 
 -- |Алгебраический тип для представления произвольных выражений.
+data Statement
+    = Fun String Params Expr
+    | Line Expr
+    deriving Show
+
+type Params = [String]
+
 data Expr
     = Const Double          -- ^Выражение может быть константным значением...
-    | BinaryOp Op Expr Expr -- ^...либо бинарным оператором, применённым к левому и правому подвыражениям.
+    | BinaryOp Op Expr Expr -- ^...бинарным оператором, применённым к левому и правому подвыражениям.
+    | Var String            -- ^...переменной...
+    | Assign String Expr    -- ^...либо оператором присваивания.
+    deriving (Show, Eq)
 
 -- |Простой тип-перечисление для поддерживаемых бинарных операторов.
 data Op = Add | Sub | Mul | Div | Rem
+    deriving (Show, Eq)
 
 {- * Парсинг -}
 -- $parsing
@@ -49,8 +65,8 @@ calcLang = makeTokenParser $ emptyDef {
     identStart = letter,
     identLetter = alphaNum,
     reservedNames = ["fn"],
-    reservedOpNames = ["+", "-", "*", "/", "%", "=>"],
-    opLetter = oneOf "*/+-%"
+    reservedOpNames = ["+", "-", "*", "/", "%", "=>", "="],
+    opLetter = oneOf "*/+-%="
 }
 
 -- | Список, задающий, какой символ в какой оператор нужно превратить.
@@ -59,8 +75,9 @@ operators = [ [ ('*', Mul), ('/', Div) ],
               [ ('+', Add), ('-', Sub) ] ]
 
 -- | Таблица парсеров операторов с убыванием приоритета, сконвертированная из 'operators'.
-table = [ [ Infix (char ch *> whiteSpace calcLang *> return (BinaryOp op)) AssocLeft
-          | (ch, op) <- opGroup ]
+table = [ [ Infix parser AssocLeft
+          | (ch, op) <- opGroup
+          , let parser = char ch *> whiteSpace calcLang *> return (BinaryOp op) ]
         | opGroup <- operators ]
 
 {- Код выше – более короткий способ записать кучу бойлерплейта по определению операторов, вроде:
@@ -83,11 +100,25 @@ pConst = Const . toDouble <$> naturalOrFloat calcLang where
     toDouble (Right r) = r
 
 -- |Парсер арифметических выражений, который сгенерирован /Parsec/ из описания операторов.
-pExpr = buildExpressionParser table pTerm
+pExpr = try pAssign <|> buildExpressionParser table pTerm
+
+pAssign = Assign <$> pName <*> (reservedOp calcLang "=" *> pExpr)
 
 -- |Парсер элементов, из которых могут составляться выражения -
--- сейчас это либо константы, либо подвыражения в скобках.
-pTerm = parens calcLang pExpr <|> pConst
+-- сейчас это либо константы, либо подвыражения в скобках, либо переменные.
+pTerm = parens calcLang pExpr <|> pConst <|> (Var <$> pName)
+
+pName = identifier calcLang
+
+pFun = do
+    reserved calcLang "fn"
+    name <- pName
+    params <- many pName
+    reservedOp calcLang "=>"
+    expr <- pExpr
+    return $ Fun name params expr
+
+pStatement = (Line <$> pExpr <|> pFun) <* eof
 
 {- * Вычисления -}
 --
@@ -96,14 +127,31 @@ pTerm = parens calcLang pExpr <|> pConst
 -- Чтобы получить результат, выражение нужно /вычислить/. Делается это рекурсивным обходом
 -- значения 'Expr' с превращением в 'Double'-вый результат всего что можно.
 
-eval :: Expr -> Double
-eval (Const val) = val
-eval (BinaryOp op left right) = opDo (eval left) (eval right) where
-    opDo = case op of
-        Add -> (+)
-        Sub -> (-)
-        Mul -> (*)
-        Div -> (/)
+eval :: Expr -> StateT Memory (Either String) Double
+eval (Const val) = return val
+eval (BinaryOp op left right) = do
+    leftRes <- eval left
+    rightRes <- eval right
+    return $ opDo leftRes rightRes
+    where
+        opDo = case op of
+            Add -> (+)
+            Sub -> (-)
+            Mul -> (*)
+            Div -> (/)
+eval (Var name) = do
+    var <- gets (M.lookup name)
+    maybe (throwError $ "Undefined variable: " ++ name) return var
+    --case var of
+    --    Just val -> return val
+    --    Nothing  -> throwError $ "Undefined variable: " ++ name
+    --mem <- get
+    --return $ fromMaybe (error $ "Undefined variable: " ++ name) $ M.lookup name mem
+    --gets (fromMaybe (error $ "Undefined variable: " ++ name) . M.lookup name)
+eval (Assign name expr) = do
+    res <- eval expr
+    modify $ M.insert name res
+    return res
 
 {- * Выполнение -}
 --
@@ -115,17 +163,32 @@ eval (BinaryOp op left right) = opDo (eval left) (eval right) where
 type Result = Maybe Double
 
 -- |Тип для интерпретатора, который должен иметь информацию о переменных и функциях.
--- Сейчас их нет, поэтому тип – заглушка и даже не имеет значений.
-data Interpreter
+data Interpreter = Interpreter { 
+    getMem :: Memory,
+    funcs :: FunDefs
+}
+
+-- |Тип для хранения значений переменных.
+type Memory = M.Map String Double
+
+type FunDefs = M.Map String (Params, Expr)
 
 -- |Средство создать новый экземпляр интерпретатора, пока тоже заглушка.
 newInterpreter :: Interpreter
-newInterpreter = undefined
+newInterpreter = Interpreter M.empty M.empty
 
 -- |Итоговая функция, которую по требованию задачи должен экспортировать модуль.
 -- Ей можно скормить строку с состоянием интерпретатора и получить результат
 -- с новым состоянием (либо ошибку).
 input :: String -> Interpreter -> Either String (Result, Interpreter)
-input str interpreter = case parse (pExpr <* eof) "" str of
-    Left err -> Left $ show err
-    Right e -> Right (Just $ eval e, interpreter)
+input str interpreter = do
+    stmt <- parseStatement str
+    case stmt of
+        Line expr -> do
+            (res, mem) <- runStateT (eval expr) $ getMem interpreter
+            return (Just res, interpreter {getMem = mem})
+        Fun name params expr -> do
+            undefined
+
+parseStatement :: String -> Either String Statement
+parseStatement = first show . parse pStatement ""

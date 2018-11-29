@@ -1,7 +1,8 @@
 library:
   source-dirs: src
   dependencies:
-    - parsec
+  - parsec
+  - mtl
 tests:
   interpreter-test:
     source-dirs: test
@@ -17,6 +18,7 @@ tests:
 copyright: 2018 Ciliz
 maintainer: example@example.com
 dependencies:
+- containers
 - base >= 4.7 && < 5
 name: interpreter
 version: 0.2.0.0
